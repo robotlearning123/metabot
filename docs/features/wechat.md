@@ -13,7 +13,35 @@ MetaBot supports WeChat personal accounts via the ClawBot plugin (iLink Bot API)
 
 ## Setup
 
-### 1. Add WeChat Bot Config
+### Option A: Installer (Recommended)
+
+Run the installer and pick `3) WeChat ClawBot` as the IM platform:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/xvirobotics/metabot/main/install.sh | bash
+```
+
+The installer will:
+
+1. Generate `wechatBots` config in `bots.json`
+2. Start MetaBot and wait for QR login
+3. **Display the QR login URL directly in the terminal** — open it and scan to bind
+
+```
+  ╔══════════════════════════════════════════════╗
+  ║  WeChat ClawBot — Scan QR Code to bind      ║
+  ╚══════════════════════════════════════════════╝
+
+  https://ilinkai.weixin.qq.com/...
+
+  Open the URL above in your browser, then scan the QR code with WeChat.
+```
+
+Multi-platform support: pick `5) Feishu + WeChat` or `6) All`.
+
+### Option B: Manual Setup
+
+#### 1. Add WeChat Bot Config
 
 Add a `wechatBots` section to your `bots.json`:
 
@@ -29,7 +57,7 @@ Add a `wechatBots` section to your `bots.json`:
 }
 ```
 
-### 2. Start MetaBot
+#### 2. Start MetaBot
 
 ```bash
 npm run dev
@@ -43,7 +71,7 @@ Open this URL or scan the QR code: https://...
 Waiting for scan...
 ```
 
-### 3. Scan QR Code
+#### 3. Scan QR Code
 
 Scan with WeChat and confirm authorization. After confirmation:
 
@@ -51,7 +79,7 @@ Scan with WeChat and confirm authorization. After confirmation:
 - Subsequent restarts auto-restore the session
 - Terminal shows `WeChat bot is running (long polling)`
 
-### 4. Start Chatting
+### Start Chatting
 
 Send a message to ClawBot in WeChat — MetaBot handles it and replies.
 
@@ -93,12 +121,12 @@ CLAUDE_DEFAULT_WORKING_DIRECTORY=/home/user/project
 |---------|--------|----------|--------|
 | Connection | WebSocket | Long polling | Long polling (35s) |
 | Message editing | ✅ Streaming cards | ✅ Edit messages | ❌ Not supported |
-| Progress display | Real-time card updates | Real-time message edits | Typing indicator + final result |
+| Progress display | Real-time card updates | Real-time message edits | Tool progress messages + final result |
 | Group chats | ✅ | ✅ | ❌ Private only |
 | Public IP | Not needed | Not needed | Not needed |
 
 !!! note "Message Updates"
-    WeChat doesn't support editing sent messages. MetaBot shows a "thinking..." message with typing indicator during processing, then sends the final result as a new message.
+    WeChat doesn't support editing sent messages. MetaBot sends tool progress updates every 5 seconds (e.g. `🔧 Running... ✓ Read file.ts`), then sends the final result as a new message.
 
 ## Troubleshooting
 

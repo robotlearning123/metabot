@@ -4,69 +4,60 @@ import type { Logger } from '../utils/logger.js';
 import type { WechatClient } from './wechat-client.js';
 
 const MAX_TEXT_LENGTH = 4000;
-const TYPING_THROTTLE_MS = 10_000;
-
-const STATUS_LABEL: Record<CardStatus, string> = {
-  thinking: '思考中...',
-  running: '运行中...',
-  complete: '完成',
-  error: '错误',
-  waiting_for_input: '等待输入',
-};
+const PROGRESS_THROTTLE_MS = 5_000;
 
 /**
  * WeChat implementation of IMessageSender.
  *
- * WeChat does NOT support message editing, so:
- * - sendCard(): sends a short "thinking" message + typing indicator
- * - updateCard() intermediate: sends typing indicator (throttled)
- * - updateCard() terminal: sends the final result as a NEW message
- * - updateCard() waiting_for_input: sends question as a NEW message
+ * iLink API constraints:
+ * - GENERATING→FINISH with same client_id returns ret:-2
+ *
+ * Strategy: don't send anything in sendCard (preserve context_token), send tool
+ * progress as standalone messages during processing, and send the final response last.
  */
 export class WechatSender implements IMessageSender {
-  /** Track which synthetic messageIds already had their final message sent. */
+  /** Skip the bridge's "Task completed" notice — WeChat already sends final result as a message. */
+  skipCompletionNotice = true;
+
+  /** Track which messageIds already had their final message sent. */
   private finalSentSet = new Set<string>();
-  /** Throttle typing per chatId. */
-  private lastTypingSent = new Map<string, number>();
+  /** Throttle progress messages per messageId. */
+  private lastProgressSent = new Map<string, number>();
+  /** Track how many tool calls we've already reported per messageId. */
+  private reportedToolCount = new Map<string, number>();
 
   constructor(
     private client: WechatClient,
     private logger: Logger,
   ) {}
 
-  async sendCard(chatId: string, state: CardState): Promise<string | undefined> {
-    try {
-      const prompt = state.userPrompt.length > 80
-        ? state.userPrompt.slice(0, 80) + '...'
-        : state.userPrompt;
-      await this.client.sendTextMessage(chatId, `[${STATUS_LABEL.thinking}] ${prompt}`);
-      await this.client.sendTyping(chatId).catch(() => {});
-
-      const syntheticId = `wx:${chatId}:${Date.now()}`;
-      return syntheticId;
-    } catch (err) {
-      this.logger.error({ err, chatId }, 'Failed to send WeChat card');
-      return undefined;
-    }
+  async sendCard(chatId: string, _state: CardState): Promise<string | undefined> {
+    // Don't send any message — preserve context_token for the final response.
+    // Just send a typing indicator and return a synthetic messageId.
+    const messageId = `wx:${chatId}:${Date.now()}`;
+    this.client.sendTyping(chatId).catch(() => {});
+    return messageId;
   }
 
   async updateCard(messageId: string, state: CardState): Promise<void> {
-    const chatId = this.extractChatId(messageId);
+    const { chatId } = this.parseMessageId(messageId);
     if (!chatId) return;
 
-    // Terminal states: send final result as new message
+    // Terminal states: send final result as standalone FINISH message
     if (state.status === 'complete' || state.status === 'error') {
       if (this.finalSentSet.has(messageId)) return; // idempotency
       this.finalSentSet.add(messageId);
-      // Auto-cleanup after 2 minutes
+      this.lastProgressSent.delete(messageId);
+      this.reportedToolCount.delete(messageId);
       setTimeout(() => this.finalSentSet.delete(messageId), 120_000);
 
       const text = this.renderFinalMessage(state);
+      // Use sendText for automatic chunking of long responses
       await this.sendText(chatId, text);
       return;
     }
 
-    // Waiting for input: send question
+    // Waiting for input: send question as standalone message
     if (state.status === 'waiting_for_input' && state.pendingQuestion) {
       const text = this.renderQuestionMessage(state);
       await this.client.sendTextMessage(chatId, text).catch((err) => {
@@ -75,12 +66,22 @@ export class WechatSender implements IMessageSender {
       return;
     }
 
-    // Intermediate states: send typing indicator (throttled)
+    // Intermediate: send tool progress as actual messages (throttled)
     const now = Date.now();
-    const lastTyping = this.lastTypingSent.get(chatId) || 0;
-    if (now - lastTyping > TYPING_THROTTLE_MS) {
-      this.lastTypingSent.set(chatId, now);
-      await this.client.sendTyping(chatId).catch(() => {});
+    const lastProgress = this.lastProgressSent.get(messageId) || 0;
+    const reported = this.reportedToolCount.get(messageId) || 0;
+    const hasNewTools = state.toolCalls.length > reported;
+
+    if (hasNewTools && now - lastProgress > PROGRESS_THROTTLE_MS) {
+      this.lastProgressSent.set(messageId, now);
+      // Only report new tool calls since last update
+      const newTools = state.toolCalls.slice(reported);
+      this.reportedToolCount.set(messageId, state.toolCalls.length);
+
+      const text = this.renderProgressMessage(newTools, state.status);
+      await this.client.sendTextMessage(chatId, text).catch((err) => {
+        this.logger.debug({ err, chatId }, 'Failed to send WeChat progress (may lack context_token)');
+      });
     }
   }
 
@@ -129,7 +130,6 @@ export class WechatSender implements IMessageSender {
   }
 
   async downloadImage(_messageId: string, imageKey: string, savePath: string): Promise<boolean> {
-    // imageKey is "aesKey|encryptQueryParam"
     const [aesKey, encryptQueryParam] = imageKey.split('|', 2);
     if (!aesKey || !encryptQueryParam) return false;
     return this.client.downloadMedia(encryptQueryParam, aesKey, savePath);
@@ -143,48 +143,29 @@ export class WechatSender implements IMessageSender {
 
   // --- Rendering ---
 
-  private renderFinalMessage(state: CardState): string {
+  /** Progress message for new tool calls since last update. */
+  private renderProgressMessage(newTools: CardState['toolCalls'], status: CardState['status']): string {
     const parts: string[] = [];
-
-    // Header
-    const label = state.status === 'complete' ? '✅ 完成' : '❌ 错误';
+    const label = status === 'thinking' ? '🤔 思考中...' : '🔧 运行中...';
     parts.push(label);
 
-    // Tool calls summary
-    if (state.toolCalls.length > 0) {
-      parts.push('---');
-      for (const t of state.toolCalls) {
-        const icon = t.status === 'done' ? '✓' : '…';
-        parts.push(`${icon} ${t.name} ${t.detail}`);
-      }
-    }
-
-    // Response text
-    if (state.responseText) {
-      parts.push('---');
-      parts.push(state.responseText);
-    }
-
-    // Error
-    if (state.errorMessage) {
-      parts.push('');
-      parts.push(`错误: ${state.errorMessage}`);
-    }
-
-    // Stats
-    const statParts: string[] = [];
-    if (state.durationMs !== undefined) {
-      statParts.push(`耗时: ${(state.durationMs / 1000).toFixed(1)}s`);
-    }
-    if (state.costUsd !== undefined) {
-      statParts.push(`费用: $${state.costUsd.toFixed(4)}`);
-    }
-    if (statParts.length > 0) {
-      parts.push('---');
-      parts.push(statParts.join(' | '));
+    for (const t of newTools.slice(-5)) {
+      const icon = t.status === 'done' ? '✓' : '⏳';
+      const detail = t.detail.length > 80 ? t.detail.slice(0, 80) + '...' : t.detail;
+      parts.push(`${icon} ${t.name} ${detail}`);
     }
 
     return parts.join('\n');
+  }
+
+  /** Final message: just the response text (or error). */
+  private renderFinalMessage(state: CardState): string {
+    if (state.status === 'error') {
+      return state.errorMessage || '执行出错';
+    }
+
+    // Just the response text
+    return state.responseText || '(无输出)';
   }
 
   private renderQuestionMessage(state: CardState): string {
@@ -208,13 +189,20 @@ export class WechatSender implements IMessageSender {
     return parts.join('\n');
   }
 
-  private extractChatId(messageId: string): string | undefined {
-    // Format: wx:{chatId}:{timestamp}
-    const parts = messageId.split(':');
-    if (parts.length >= 3 && parts[0] === 'wx') {
-      return parts[1];
-    }
-    return undefined;
+  private parseMessageId(messageId: string): { chatId?: string; clientId?: string } {
+    // Format: wx:{chatId}:{clientId}
+    // chatId may contain colons (unlikely but safe), clientId is the last segment
+    const firstColon = messageId.indexOf(':');
+    if (firstColon < 0 || messageId.slice(0, firstColon) !== 'wx') return {};
+
+    const rest = messageId.slice(firstColon + 1);
+    const lastColon = rest.lastIndexOf(':');
+    if (lastColon < 0) return {};
+
+    return {
+      chatId: rest.slice(0, lastColon),
+      clientId: rest.slice(lastColon + 1),
+    };
   }
 }
 
@@ -228,10 +216,8 @@ function splitLongText(text: string, maxLen: number): string[] {
       chunks.push(remaining);
       break;
     }
-    // Try to split at a newline
     let splitAt = remaining.lastIndexOf('\n', maxLen);
     if (splitAt < maxLen * 0.3) {
-      // No good newline break, split at maxLen
       splitAt = maxLen;
     }
     chunks.push(remaining.slice(0, splitAt));

@@ -48,15 +48,18 @@ interface GetUpdatesResponse {
 }
 
 interface QrCodeResponse {
-  qrcode_id: string;
-  qrcode_url?: string;
-  qrcode_image?: string;
+  ret?: number;
+  qrcode: string;               // QR code ID for status polling
+  qrcode_img_content?: string;  // scannable URL
 }
 
 interface QrStatusResponse {
-  status: string; // 'waiting', 'scanned', 'confirmed', 'expired'
+  ret?: number;
+  status: string; // 'wait', 'scanned', 'confirmed', 'expired'
   bot_token?: string;
   baseurl?: string;
+  ilink_bot_id?: string;
+  ilink_user_id?: string;
 }
 
 interface GetConfigResponse {
@@ -113,8 +116,8 @@ export class WechatClient {
     this.logger.info('Starting WeChat iLink QR login...');
 
     const qrRes = await this.request<QrCodeResponse>('GET', '/ilink/bot/get_bot_qrcode?bot_type=3', undefined, false);
-    const qrUrl = qrRes.qrcode_url || qrRes.qrcode_image || '';
-    const qrId = qrRes.qrcode_id;
+    const qrUrl = qrRes.qrcode_img_content || '';
+    const qrId = qrRes.qrcode;
 
     this.logger.info({ qrUrl, qrId }, 'QR code generated — scan with WeChat');
 
@@ -123,7 +126,7 @@ export class WechatClient {
     console.log(`Open this URL or scan the QR code: ${qrUrl}`);
     console.log('Waiting for scan...\n');
 
-    // Poll for scan status
+    // Poll for scan status (API may long-poll ~30s or return immediately)
     let token: string | undefined;
     const maxAttempts = 60; // ~5 minutes with 5s intervals
     for (let i = 0; i < maxAttempts; i++) {
@@ -132,7 +135,10 @@ export class WechatClient {
         `/ilink/bot/get_qrcode_status?qrcode=${encodeURIComponent(qrId)}`,
         undefined,
         false,
+        45000, // 45s timeout — API may long-poll for ~30s
       );
+
+      this.logger.debug({ status: statusRes.status, attempt: i + 1 }, 'QR status poll');
 
       if (statusRes.status === 'confirmed' && statusRes.bot_token) {
         token = statusRes.bot_token;
@@ -217,25 +223,40 @@ export class WechatClient {
     return messages;
   }
 
-  async sendMessage(toUserId: string, items: ILinkMessageItem[]): Promise<void> {
+  /**
+   * Send a message. Use clientId + messageState for streaming:
+   * - messageState=1 (GENERATING): shows as "typing/generating" in WeChat, can be updated
+   * - messageState=2 (FINISH): final message, same clientId replaces the GENERATING one
+   */
+  async sendMessage(
+    toUserId: string,
+    items: ILinkMessageItem[],
+    opts?: { clientId?: string; messageState?: number },
+  ): Promise<string> {
     const contextToken = this.contextTokens.get(toUserId);
+    const clientId = opts?.clientId || `metabot-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const messageState = opts?.messageState ?? 2; // default FINISH
 
-    // Official API wraps in { msg: { ... } }
     const body = {
       msg: {
+        from_user_id: '',
         to_user_id: toUserId,
+        client_id: clientId,
+        message_type: 2, // BOT
+        message_state: messageState,
         ...(contextToken ? { context_token: contextToken } : {}),
         item_list: items,
       },
     };
 
-    await this.request('POST', '/ilink/bot/sendmessage', body);
+    await this.request<Record<string, unknown>>('POST', '/ilink/bot/sendmessage', body);
+    return clientId;
   }
 
-  async sendTextMessage(toUserId: string, text: string): Promise<void> {
-    await this.sendMessage(toUserId, [
+  async sendTextMessage(toUserId: string, text: string, opts?: { clientId?: string; messageState?: number }): Promise<string> {
+    return this.sendMessage(toUserId, [
       { type: 1, text_item: { text } },
-    ]);
+    ], opts);
   }
 
   async sendTyping(toUserId: string, cancel = false): Promise<void> {

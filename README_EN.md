@@ -77,7 +77,7 @@ curl -fsSL https://raw.githubusercontent.com/xvirobotics/metabot/main/install.sh
 irm https://raw.githubusercontent.com/xvirobotics/metabot/main/install.ps1 | iex
 ```
 
-The installer walks you through: working directory → Claude auth → IM credentials → auto-start with PM2.
+The installer walks you through: working directory → Claude auth → IM platform (Feishu/Telegram/WeChat ClawBot) → auto-start with PM2. Choose WeChat and the installer will display a QR login URL after startup — scan to bind.
 
 **Update anytime** — already installed? One command to pull, rebuild, and restart:
 
@@ -116,8 +116,9 @@ Prerequisites: Node.js 20+, [Claude Code CLI](https://github.com/anthropics/clau
 
 **WeChat** (gray testing):
 1. iPhone WeChat 8.0.70+ → Settings → Plugins → enable **ClawBot**
-2. Add `wechatBots` to `bots.json` → start MetaBot → scan QR code
-3. See [WeChat Setup Guide](https://xvirobotics.com/metabot/features/wechat/)
+2. Run `install.sh`, pick `3) WeChat ClawBot` — after install, the QR login URL is displayed automatically; scan to bind
+3. Or manually: add `wechatBots` to `bots.json` → `npm run dev` → scan QR in terminal
+4. See [WeChat Setup Guide](https://xvirobotics.com/metabot/features/wechat/)
 
 **Feishu/Lark**:
 1. Create app at [open.feishu.cn](https://open.feishu.cn/) → add Bot capability

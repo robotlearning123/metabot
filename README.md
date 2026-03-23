@@ -77,7 +77,7 @@ curl -fsSL https://raw.githubusercontent.com/xvirobotics/metabot/main/install.sh
 irm https://raw.githubusercontent.com/xvirobotics/metabot/main/install.ps1 | iex
 ```
 
-安装器引导：工作目录 → Claude 认证 → IM 平台凭证 → PM2 自动启动。
+安装器引导：工作目录 → Claude 认证 → IM 平台（飞书/Telegram/微信 ClawBot）→ PM2 自动启动。选择微信后安装器会自动显示 QR 登录链接，扫码即可绑定。
 
 **随时更新** — 已安装？一条命令拉取、构建、重启：
 
@@ -116,8 +116,9 @@ npm run dev
 
 **微信**（灰测中）：
 1. iPhone 微信 8.0.70+ → 设置 → 插件 → 开启 **ClawBot**
-2. 在 `bots.json` 中添加 `wechatBots` 配置 → 启动 MetaBot → 扫码绑定
-3. 详见 [微信接入指南](https://xvirobotics.com/metabot/zh/features/wechat/)
+2. 运行 `install.sh`，IM 平台选 `3) WeChat ClawBot` — 安装完成后自动显示 QR 链接，扫码绑定
+3. 或手动：在 `bots.json` 添加 `wechatBots` → `npm run dev` → 终端扫码
+4. 详见 [微信接入指南](https://xvirobotics.com/metabot/zh/features/wechat/)
 
 **飞书**：
 1. [open.feishu.cn](https://open.feishu.cn/) 创建应用 → 添加「机器人」能力
