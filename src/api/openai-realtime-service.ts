@@ -1,17 +1,28 @@
 /**
  * OpenAI Realtime Voice Service — WebRTC-based real-time voice conversations
- * 
- * Uses OpenAI's Realtime API (gpt-realtime-1.5) for native audio processing.
- * This is an alternative to Volcengine RTC with higher quality but higher cost.
- * 
- * Protocol: WebRTC (SDP offer/answer exchange)
- * Model: gpt-realtime-1.5 (default) or gpt-realtime-mini
+ *
+ * Uses OpenAI's Realtime API for native audio processing.
+ * Alternative to Volcengine RTC with higher quality but higher cost.
+ *
+ * Protocol: WebRTC (SDP offer/answer exchange via /v1/realtime/calls)
+ * Default model: gpt-realtime-mini (cost-efficient)
  */
 
 import * as crypto from 'node:crypto';
 import type { Logger } from '../utils/logger.js';
 
 // ---------- Types ----------
+
+interface IceServer {
+  urls: string | string[];
+  username?: string;
+  credential?: string;
+}
+
+const VALID_MODELS = ['gpt-realtime-mini', 'gpt-realtime-1.5', 'gpt-realtime'] as const;
+type RealtimeModel = (typeof VALID_MODELS)[number];
+
+const MAX_SDP_LENGTH = 65536;
 
 export interface OpenAiRealtimeSession {
   id: string;
@@ -28,28 +39,21 @@ export interface OpenAiRealtimeSession {
     text: string;
     timestamp: number;
   }>;
-  /** WebRTC SDP answer from OpenAI */
   sdpAnswer?: string;
-  /** ICE servers for WebRTC connection */
-  iceServers?: RTCIceServer[];
+  iceServers?: IceServer[];
 }
 
 export interface StartOpenAiRealtimeParams {
-  /** System prompt for the AI agent */
   systemPrompt?: string;
-  /** Voice to use (alloy, echo, fable, onyx, nova, shimmer, ash, sage, coral) */
+  /** Voice: alloy, ash, ballad, coral, echo, sage, shimmer, verse, cedar, marin */
   voice?: string;
-  /** Model to use (gpt-realtime-1.5, gpt-realtime-mini) */
+  /** Model: gpt-realtime-mini (default), gpt-realtime-1.5, gpt-realtime */
   model?: string;
   /** WebRTC SDP offer from client */
   sdpOffer: string;
-  /** Claude session chatId */
   chatId?: string;
-  /** Bot name */
   botName?: string;
-  /** Temperature (0-1) */
   temperature?: number;
-  /** Max tokens per response */
   maxTokens?: number;
 }
 
@@ -57,7 +61,7 @@ export interface StartOpenAiRealtimeResult {
   sessionId: string;
   callId: string;
   sdpAnswer: string;
-  iceServers: RTCIceServer[];
+  iceServers: IceServer[];
   model: string;
   voice: string;
 }
@@ -72,32 +76,44 @@ export class OpenAiRealtimeService {
     this.logger = logger.child({ module: 'openai-realtime' });
   }
 
-  /** Check if OpenAI Realtime is configured */
   isConfigured(): boolean {
     return !!process.env.OPENAI_API_KEY;
   }
 
-  /**
-   * Start a new OpenAI Realtime voice session
-   * 
-   * This initiates a WebRTC connection with OpenAI's Realtime API.
-   * The client must provide an SDP offer, and we return an SDP answer.
-   */
   async startSession(params: StartOpenAiRealtimeParams): Promise<StartOpenAiRealtimeResult> {
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) {
       throw new Error('OPENAI_API_KEY not configured');
     }
 
+    // Validate SDP offer
+    if (!params.sdpOffer || typeof params.sdpOffer !== 'string') {
+      throw Object.assign(new Error('sdpOffer is required'), { statusCode: 400 });
+    }
+    if (params.sdpOffer.length > MAX_SDP_LENGTH) {
+      throw Object.assign(new Error(`sdpOffer too large (max ${MAX_SDP_LENGTH} bytes)`), { statusCode: 400 });
+    }
+    if (!params.sdpOffer.trimStart().startsWith('v=0')) {
+      throw Object.assign(new Error('Invalid SDP offer (must start with v=0)'), { statusCode: 400 });
+    }
+
+    // Validate model
+    const model = (params.model || 'gpt-realtime-mini') as RealtimeModel;
+    if (!VALID_MODELS.includes(model)) {
+      throw Object.assign(
+        new Error(`Invalid model: ${params.model}. Valid: ${VALID_MODELS.join(', ')}`),
+        { statusCode: 400 },
+      );
+    }
+
     const sessionId = crypto.randomUUID();
     const callId = `call_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-    const model = params.model || 'gpt-realtime-1.5';
-    const voice = params.voice || 'alloy';
+    const voice = params.voice || 'coral';
 
     this.logger.info({ sessionId, callId, model, voice }, 'Starting OpenAI Realtime session');
 
-    // Call OpenAI Realtime API to get SDP answer
-    const realtimeUrl = new URL('https://api.openai.com/v1/realtime');
+    // GA endpoint: POST /v1/realtime/calls?model=...
+    const realtimeUrl = new URL('https://api.openai.com/v1/realtime/calls');
     realtimeUrl.searchParams.set('model', model);
 
     const response = await fetch(realtimeUrl.toString(), {
@@ -105,7 +121,6 @@ export class OpenAiRealtimeService {
       headers: {
         'Authorization': `Bearer ${apiKey}`,
         'Content-Type': 'application/sdp',
-        'OpenAI-Beta': 'realtime=v1',
       },
       body: params.sdpOffer,
     });
@@ -115,15 +130,12 @@ export class OpenAiRealtimeService {
       throw new Error(`OpenAI Realtime API error: ${response.status} ${error}`);
     }
 
-    // Get SDP answer from response body
     const sdpAnswer = await response.text();
-    
-    // Extract ICE servers from response headers if available
-    const iceServers: RTCIceServer[] = [
-      { urls: 'stun:stun.l.google.com:19302' }, // Fallback STUN
+
+    const iceServers: IceServer[] = [
+      { urls: 'stun:stun.l.google.com:19302' },
     ];
 
-    // Create session
     const session: OpenAiRealtimeSession = {
       id: sessionId,
       callId,
@@ -142,62 +154,39 @@ export class OpenAiRealtimeService {
 
     this.logger.info({ sessionId, callId, model }, 'OpenAI Realtime session started');
 
-    return {
-      sessionId,
-      callId,
-      sdpAnswer,
-      iceServers,
-      model,
-      voice,
-    };
+    return { sessionId, callId, sdpAnswer, iceServers, model, voice };
   }
 
-  /**
-   * Stop an active session
-   */
   async stopSession(sessionId: string): Promise<void> {
     const session = this.sessions.get(sessionId);
     if (!session) {
       throw new Error(`Session not found: ${sessionId}`);
     }
 
+    // Note: WebRTC sessions end when the peer connection closes.
+    // OpenAI does not expose a server-side close API for WebRTC sessions.
+    // The client must close its RTCPeerConnection to terminate the session.
     session.status = 'stopped';
     session.stoppedAt = Date.now();
 
-    this.logger.info({ sessionId, callId: session.callId }, 'OpenAI Realtime session stopped');
+    this.logger.info({ sessionId, callId: session.callId }, 'OpenAI Realtime session stopped (client must close RTCPeerConnection)');
   }
 
-  /**
-   * Get session by ID
-   */
   getSession(sessionId: string): OpenAiRealtimeSession | undefined {
     return this.sessions.get(sessionId);
   }
 
-  /**
-   * List all sessions
-   */
   listSessions(): OpenAiRealtimeSession[] {
     return Array.from(this.sessions.values());
   }
 
-  /**
-   * Add transcript entry
-   */
   addTranscript(sessionId: string, speaker: 'user' | 'assistant', text: string): void {
     const session = this.sessions.get(sessionId);
     if (session) {
-      session.transcript.push({
-        speaker,
-        text,
-        timestamp: Date.now(),
-      });
+      session.transcript.push({ speaker, text, timestamp: Date.now() });
     }
   }
 
-  /**
-   * Clean up old sessions
-   */
   cleanup(maxAgeMs: number = 24 * 60 * 60 * 1000): void {
     const now = Date.now();
     for (const [id, session] of this.sessions) {
@@ -206,14 +195,4 @@ export class OpenAiRealtimeService {
       }
     }
   }
-}
-
-// Singleton instance
-let service: OpenAiRealtimeService | null = null;
-
-export function getOpenAiRealtimeService(logger: Logger): OpenAiRealtimeService {
-  if (!service) {
-    service = new OpenAiRealtimeService(logger);
-  }
-  return service;
 }

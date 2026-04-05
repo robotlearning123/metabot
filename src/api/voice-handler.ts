@@ -323,7 +323,7 @@ export async function geminiTTS(text: string, voice: string): Promise<Buffer> {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw Object.assign(new Error('GEMINI_API_KEY not configured'), { statusCode: 500 });
 
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-native-audio:generateContent?key=${apiKey}`;
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent?key=${apiKey}`;
   const response = await proxyFetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -331,12 +331,12 @@ export async function geminiTTS(text: string, voice: string): Promise<Buffer> {
       contents: [{ parts: [{ text }] }],
       generationConfig: {
         responseModalities: ['AUDIO'],
-        speechConfig: {
-          voiceConfig: { 
-            prebuiltVoiceConfig: { 
-              voiceName: voice || 'Aoede' // Aoede, Charon, Fenrir, Kore, Leda, Orus, Puck
-            } 
-          }
+      },
+      speechConfig: {
+        voiceConfig: {
+          prebuiltVoiceConfig: {
+            voiceName: voice || 'Aoede',
+          },
         },
       },
     }),
@@ -374,11 +374,6 @@ export async function grokTTS(text: string, voice: string): Promise<Buffer> {
       text: text.slice(0, 15000),
       voice_id: (voice || 'Eve').toLowerCase(),
       language: detectChinese(text) ? 'zh' : 'en',
-      output_format: {
-        codec: 'mp3',
-        sample_rate: 24000,
-        bit_rate: 128000,
-      },
     }),
   });
 
@@ -396,7 +391,7 @@ export async function grokTTS(text: string, voice: string): Promise<Buffer> {
 
 export async function edgeTTS(text: string, voice: string): Promise<Buffer> {
   const { EdgeTTS } = await import('node-edge-tts');
-  const tmpFile = `/tmp/mb-edge-tts-${Date.now()}.mp3`;
+  const tmpFile = path.join(os.tmpdir(), `mb-edge-tts-${Date.now()}.mp3`);
   const tts = new EdgeTTS({ voice: voice || 'zh-CN-XiaoyiNeural', lang: 'zh-CN' });
   await tts.ttsPromise(text, tmpFile);
   const buf = await fsp.readFile(tmpFile);
@@ -467,7 +462,8 @@ function detectChinese(text: string): boolean {
       }
     }
   }
-  return total === 0 || cjk / total >= 0.15;
+  if (total === 0) return false; // unknown → default voice
+  return cjk / total >= 0.15;
 }
 
 // ---------------------------------------------------------------------------
