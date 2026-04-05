@@ -14,6 +14,7 @@ import type { TeamManager } from '../team-manager.js';
 import type { VoiceMeetingService } from '../voice-meeting.js';
 import type { VoiceIdentityStore } from '../voice-identity.js';
 import type { RtcVoiceChatService } from '../rtc-voice-chat.js';
+import type { OpenAiRealtimeService } from '../openai-realtime-service.js';
 import type { WebSocketHandle } from '../../web/ws-server.js';
 import type { SessionRegistry } from '../../session/session-registry.js';
 import type { ActivityStore } from '../activity-store.js';
@@ -36,6 +37,7 @@ export interface RouteContext {
   meetingService: VoiceMeetingService;
   voiceIdentityStore: VoiceIdentityStore;
   rtcService?: RtcVoiceChatService;
+  realtimeService?: OpenAiRealtimeService;
   ws: { handle?: WebSocketHandle };
   sessionRegistry?: SessionRegistry;
   activityStore?: ActivityStore;
