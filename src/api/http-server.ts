@@ -76,6 +76,7 @@ export function startApiServer(options: ApiServerOptions): http.Server {
   const realtimeService = new OpenAiRealtimeService(logger);
   if (realtimeService.isConfigured()) {
     logger.info('OpenAI Realtime voice service enabled (gpt-realtime-mini)');
+    setInterval(() => realtimeService.cleanup(), 30 * 60 * 1000); // every 30 min
   }
 
   const ws: { handle?: WebSocketHandle } = {};

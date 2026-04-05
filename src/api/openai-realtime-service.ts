@@ -23,6 +23,9 @@ const VALID_MODELS = ['gpt-realtime-mini', 'gpt-realtime-1.5', 'gpt-realtime'] a
 type RealtimeModel = (typeof VALID_MODELS)[number];
 
 const MAX_SDP_LENGTH = 65536;
+const FETCH_TIMEOUT_MS = 30_000;
+const MAX_SESSIONS = 50;
+const MAX_ACTIVE_AGE_MS = 4 * 60 * 60 * 1000; // 4 hours
 
 export interface OpenAiRealtimeSession {
   id: string;
@@ -86,6 +89,12 @@ export class OpenAiRealtimeService {
       throw new Error('OPENAI_API_KEY not configured');
     }
 
+    // Enforce session limit
+    const activeSessions = [...this.sessions.values()].filter(s => s.status !== 'stopped').length;
+    if (activeSessions >= MAX_SESSIONS) {
+      throw Object.assign(new Error(`Too many active sessions (max ${MAX_SESSIONS})`), { statusCode: 429 });
+    }
+
     // Validate SDP offer
     if (!params.sdpOffer || typeof params.sdpOffer !== 'string') {
       throw Object.assign(new Error('sdpOffer is required'), { statusCode: 400 });
@@ -123,11 +132,16 @@ export class OpenAiRealtimeService {
         'Content-Type': 'application/sdp',
       },
       body: params.sdpOffer,
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     });
 
     if (!response.ok) {
       const error = await response.text();
-      throw new Error(`OpenAI Realtime API error: ${response.status} ${error}`);
+      this.logger.error({ status: response.status, error }, 'OpenAI Realtime API error');
+      throw Object.assign(
+        new Error(`Voice session failed (${response.status})`),
+        { statusCode: response.status >= 500 ? 502 : response.status },
+      );
     }
 
     const sdpAnswer = await response.text();
@@ -160,7 +174,7 @@ export class OpenAiRealtimeService {
   async stopSession(sessionId: string): Promise<void> {
     const session = this.sessions.get(sessionId);
     if (!session) {
-      throw new Error(`Session not found: ${sessionId}`);
+      throw Object.assign(new Error(`Session not found: ${sessionId}`), { statusCode: 404 });
     }
 
     // Note: WebRTC sessions end when the peer connection closes.
@@ -176,8 +190,8 @@ export class OpenAiRealtimeService {
     return this.sessions.get(sessionId);
   }
 
-  listSessions(): OpenAiRealtimeSession[] {
-    return Array.from(this.sessions.values());
+  listSessions(): Omit<OpenAiRealtimeSession, 'sdpAnswer'>[] {
+    return Array.from(this.sessions.values()).map(({ sdpAnswer: _, ...rest }) => rest);
   }
 
   addTranscript(sessionId: string, speaker: 'user' | 'assistant', text: string): void {
@@ -189,10 +203,23 @@ export class OpenAiRealtimeService {
 
   cleanup(maxAgeMs: number = 24 * 60 * 60 * 1000): void {
     const now = Date.now();
+    let evicted = 0;
     for (const [id, session] of this.sessions) {
+      // Evict stopped sessions older than maxAgeMs
       if (session.status === 'stopped' && session.stoppedAt && (now - session.stoppedAt) > maxAgeMs) {
         this.sessions.delete(id);
+        evicted++;
       }
+      // Evict orphaned active/connecting sessions older than MAX_ACTIVE_AGE_MS
+      if (session.status !== 'stopped' && (now - session.createdAt) > MAX_ACTIVE_AGE_MS) {
+        session.status = 'stopped';
+        session.stoppedAt = now;
+        this.sessions.delete(id);
+        evicted++;
+      }
+    }
+    if (evicted > 0) {
+      this.logger.info({ evicted, remaining: this.sessions.size }, 'Realtime session cleanup');
     }
   }
 }

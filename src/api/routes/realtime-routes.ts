@@ -40,19 +40,17 @@ export async function handleRealtimeRoutes(
         sdpOffer,
         model: (body.model as string) || undefined,
         voice: (body.voice as string) || undefined,
-        systemPrompt: (body.systemPrompt as string) || undefined,
         chatId: (body.chatId as string) || undefined,
         botName: (body.botName as string) || undefined,
-        temperature: body.temperature as number | undefined,
-        maxTokens: body.maxTokens as number | undefined,
       });
 
       // Return SDP answer + tool definitions for browser to inject via data channel
+      // System prompt is always server-controlled (no client override)
       jsonResponse(res, 200, {
         ...result,
         tools: LAB_TOOLS,
         toolEndpoints: TOOL_ENDPOINT_MAP,
-        systemPrompt: (body.systemPrompt as string) || LAB_SYSTEM_PROMPT,
+        systemPrompt: LAB_SYSTEM_PROMPT,
       });
     } catch (err: any) {
       const status = err.statusCode || 500;
@@ -80,7 +78,7 @@ export async function handleRealtimeRoutes(
       jsonResponse(res, 200, { success: true });
     } catch (err: any) {
       logger.error({ err }, 'Realtime stop error');
-      jsonResponse(res, 500, { error: err.message });
+      jsonResponse(res, err.statusCode || 500, { error: err.message });
     }
     return true;
   }
