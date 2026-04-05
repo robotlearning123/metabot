@@ -30,7 +30,7 @@ const CLAUDE_EXECUTABLE = resolveClaudePath();
  *   `cc switch`, `claude /login`, etc.) rather than stale PM2 env vars.
  *   Users who need a fixed API key can set `apiKey` in bots.json instead.
  */
-const FILTERED_ENV_PREFIXES = ['CLAUDE', 'ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN'];
+const FILTERED_ENV_PREFIXES = ['CLAUDE', 'ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL'];
 
 /**
  * Create a custom spawn function for cross-platform compatibility.
@@ -38,8 +38,9 @@ const FILTERED_ENV_PREFIXES = ['CLAUDE', 'ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TO
  * - Filters CLAUDE* and ANTHROPIC auth env vars (see above).
  * - Merges process.env so child inherits system PATH, TEMP, etc.
  * - Optionally injects an explicit ANTHROPIC_API_KEY from bots.json config.
+ * - Optionally injects an explicit ANTHROPIC_BASE_URL for third-party providers.
  */
-function createSpawnFn(explicitApiKey?: string): (options: SpawnOptions) => SpawnedProcess {
+function createSpawnFn(explicitApiKey?: string, explicitBaseUrl?: string): (options: SpawnOptions) => SpawnedProcess {
   return (options: SpawnOptions): SpawnedProcess => {
     const nodePath = process.execPath;
 
@@ -59,6 +60,11 @@ function createSpawnFn(explicitApiKey?: string): (options: SpawnOptions) => Spaw
     // Inject explicit API key from bots.json (after filtering, so it takes effect)
     if (explicitApiKey) {
       env.ANTHROPIC_API_KEY = explicitApiKey;
+    }
+
+    // Inject explicit base URL for third-party providers (z.ai, Kimi, DeepSeek, etc.)
+    if (explicitBaseUrl) {
+      env.ANTHROPIC_BASE_URL = explicitBaseUrl;
     }
 
     const child = spawn(nodePath, options.args, {
@@ -162,7 +168,7 @@ export class ClaudeExecutor {
       // Cross-platform spawn: custom spawn filters CLAUDE* env vars and uses
       // process.execPath to avoid PATH issues on Windows; fileURLToPath converts
       // file:// URLs to native paths for the SDK CLI entrypoint.
-      spawnClaudeCodeProcess: createSpawnFn(this.config.claude.apiKey),
+      spawnClaudeCodeProcess: createSpawnFn(this.config.claude.apiKey, this.config.claude.baseUrl),
       executableArgs: [path.join(path.dirname(fileURLToPath(import.meta.resolve('@anthropic-ai/claude-agent-sdk'))), 'cli.js')],
       pathToClaudeCodeExecutable: CLAUDE_EXECUTABLE,
     };

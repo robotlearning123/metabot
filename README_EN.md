@@ -246,6 +246,7 @@ Supported: text, images (Claude multimodal), files (PDF/code/docs), rich text (P
 | `maxTurns` / `maxBudgetUsd` | No | unlimited | Execution limits |
 | `model` | No | SDK default | Claude model |
 | `apiKey` | No | — | Anthropic API key (leave unset for dynamic auth via cc-switch) |
+| `baseUrl` | No | — | Anthropic-compatible API URL (e.g. `https://api.z.ai/api/anthropic`), pair with `apiKey` for third-party providers |
 
 </details>
 
