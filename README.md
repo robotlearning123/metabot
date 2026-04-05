@@ -245,6 +245,7 @@ MetaBot 支持 4 种方式与你的 Agent 团队交互：
 | `maxTurns` / `maxBudgetUsd` | 否 | 不限 | 执行限制 |
 | `model` | 否 | SDK 默认 | Claude 模型 |
 | `apiKey` | 否 | — | Anthropic API Key（不设则从 `~/.claude/.credentials.json` 动态读取，兼容 cc-switch） |
+| `baseUrl` | 否 | — | Anthropic 兼容 API 地址（如 `https://api.z.ai/api/anthropic`），搭配 `apiKey` 使用第三方模型 |
 
 </details>
 

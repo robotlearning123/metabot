@@ -43,6 +43,8 @@ Set `BOTS_CONFIG=./bots.json` in `.env` to enable multi-bot mode:
 | `maxTurns` | No | unlimited | Max turns per request |
 | `maxBudgetUsd` | No | unlimited | Max cost per request |
 | `model` | No | SDK default | Claude model |
+| `apiKey` | No | — | Anthropic API key (leave unset for cc-switch dynamic auth) |
+| `baseUrl` | No | — | Anthropic-compatible API URL for third-party providers |
 | `allowedTools` | No | `Read,Edit,Write,Glob,Grep,Bash` | Claude tools whitelist |
 | `outputsBaseDir` | No | `/tmp/metabot-outputs` | Output files directory |
 
