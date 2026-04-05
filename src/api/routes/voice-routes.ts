@@ -1,5 +1,5 @@
 import type * as http from 'node:http';
-import { handleVoiceRequest, doubaoTTS, openaiTTS, elevenlabsTTS, edgeTTS, resolveTTSProvider, resolveTTSVoice } from '../voice-handler.js';
+import { handleVoiceRequest, doubaoTTS, openaiTTS, elevenlabsTTS, edgeTTS, geminiTTS, grokTTS, resolveTTSProvider, resolveTTSVoice } from '../voice-handler.js';
 import { jsonResponse, parseJsonBody } from './helpers.js';
 import type { RouteContext } from './types.js';
 
@@ -46,6 +46,10 @@ export async function handleVoiceRoutes(
       audioBuffer = await doubaoTTS(ttsText, voice);
     } else if (provider === 'edge') {
       audioBuffer = await edgeTTS(ttsText, voice);
+    } else if (provider === 'gemini') {
+      audioBuffer = await geminiTTS(ttsText, voice);
+    } else if (provider === 'grok') {
+      audioBuffer = await grokTTS(ttsText, voice);
     } else {
       audioBuffer = await openaiTTS(ttsText, voice);
     }

@@ -316,12 +316,82 @@ export async function doubaoTTS(text: string, speaker: string): Promise<Buffer> 
 }
 
 // ---------------------------------------------------------------------------
+// Gemini (Google) TTS
+// ---------------------------------------------------------------------------
+
+export async function geminiTTS(text: string, voice: string): Promise<Buffer> {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) throw Object.assign(new Error('GEMINI_API_KEY not configured'), { statusCode: 500 });
+
+  const url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent';
+  const response = await proxyFetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
+    body: JSON.stringify({
+      contents: [{ parts: [{ text }] }],
+      generationConfig: {
+        responseModalities: ['AUDIO'],
+      },
+      speechConfig: {
+        voiceConfig: {
+          prebuiltVoiceConfig: {
+            voiceName: voice || 'Aoede',
+          },
+        },
+      },
+    }),
+  });
+
+  if (!response.ok) {
+    const err = await response.text();
+    throw new Error(`Gemini TTS failed: ${response.status} ${err}`);
+  }
+
+  const result = await response.json() as any;
+  const audioData = result?.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+  if (!audioData) {
+    throw new Error('Gemini TTS returned no audio data');
+  }
+  return Buffer.from(audioData, 'base64');
+}
+
+// ---------------------------------------------------------------------------
+// Grok (xAI) TTS
+// ---------------------------------------------------------------------------
+
+export async function grokTTS(text: string, voice: string): Promise<Buffer> {
+  const apiKey = process.env.XAI_API_KEY;
+  if (!apiKey) throw Object.assign(new Error('XAI_API_KEY not configured'), { statusCode: 500 });
+
+  const url = 'https://api.x.ai/v1/tts';
+  const response = await proxyFetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      text: text.slice(0, 15000),
+      voice_id: (voice || 'Eve').toLowerCase(),
+      language: detectChinese(text) ? 'zh' : 'en',
+    }),
+  });
+
+  if (!response.ok) {
+    const err = await response.text();
+    throw new Error(`Grok TTS failed: ${response.status} ${err}`);
+  }
+
+  return Buffer.from(await response.arrayBuffer());
+}
+
+// ---------------------------------------------------------------------------
 // Edge TTS (Microsoft Edge, free, no API key needed)
 // ---------------------------------------------------------------------------
 
 export async function edgeTTS(text: string, voice: string): Promise<Buffer> {
   const { EdgeTTS } = await import('node-edge-tts');
-  const tmpFile = `/tmp/mb-edge-tts-${Date.now()}.mp3`;
+  const tmpFile = path.join(os.tmpdir(), `mb-edge-tts-${Date.now()}.mp3`);
   const tts = new EdgeTTS({ voice: voice || 'zh-CN-XiaoyiNeural', lang: 'zh-CN' });
   await tts.ttsPromise(text, tmpFile);
   const buf = await fsp.readFile(tmpFile);
@@ -362,6 +432,12 @@ export function resolveTTSVoice(explicit: string, ttsProvider: string, text?: st
   if (ttsProvider === 'edge') {
     return isChinese ? 'zh-CN-XiaoyiNeural' : 'en-US-JennyNeural';
   }
+  if (ttsProvider === 'gemini') {
+    return isChinese ? 'Kore' : 'Aoede'; // Gemini voices: Aoede, Charon, Fenrir, Kore, Leda, Orus, Puck
+  }
+  if (ttsProvider === 'grok') {
+    return isChinese ? 'Ara' : 'Eve'; // Grok voices: Eve, Ara, Rex, Sal, Leo
+  }
   return 'alloy'; // OpenAI (multilingual)
 }
 
@@ -386,7 +462,8 @@ function detectChinese(text: string): boolean {
       }
     }
   }
-  return total === 0 || cjk / total >= 0.15;
+  if (total === 0) return false; // unknown → default voice
+  return cjk / total >= 0.15;
 }
 
 // ---------------------------------------------------------------------------
@@ -526,6 +603,10 @@ export async function handleVoiceRequest(
         audioOut = await doubaoTTS(ttsText, ttsVoice);
       } else if (ttsProvider === 'edge') {
         audioOut = await edgeTTS(ttsText, ttsVoice);
+      } else if (ttsProvider === 'gemini') {
+        audioOut = await geminiTTS(ttsText, ttsVoice);
+      } else if (ttsProvider === 'grok') {
+        audioOut = await grokTTS(ttsText, ttsVoice);
       } else {
         audioOut = await openaiTTS(ttsText, ttsVoice);
       }

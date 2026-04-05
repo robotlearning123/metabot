@@ -15,6 +15,7 @@ import { TeamManager } from './team-manager.js';
 import { VoiceMeetingService } from './voice-meeting.js';
 import { VoiceIdentityStore } from './voice-identity.js';
 import { RtcVoiceChatService } from './rtc-voice-chat.js';
+import { OpenAiRealtimeService } from './openai-realtime-service.js';
 import { ActivityStore } from './activity-store.js';
 import { metrics as _metrics } from '../utils/metrics.js';
 import type { SessionRegistry } from '../session/session-registry.js';
@@ -27,6 +28,8 @@ import {
   handleBotRoutes,
   handleSyncRoutes,
   handleRtcRoutes,
+  handleRealtimeRoutes,
+  handleLabToolRoutes,
   handleSessionRoutes,
 } from './routes/index.js';
 import type { RouteContext } from './routes/index.js';
@@ -70,6 +73,11 @@ export function startApiServer(options: ApiServerOptions): http.Server {
   if (rtcService.isConfigured()) {
     logger.info('RTC voice chat service enabled');
   }
+  const realtimeService = new OpenAiRealtimeService(logger);
+  if (realtimeService.isConfigured()) {
+    logger.info('OpenAI Realtime voice service enabled (gpt-realtime-mini)');
+    setInterval(() => realtimeService.cleanup(), 30 * 60 * 1000); // every 30 min
+  }
 
   const ws: { handle?: WebSocketHandle } = {};
 
@@ -80,6 +88,7 @@ export function startApiServer(options: ApiServerOptions): http.Server {
     asyncTaskStore, intentRouter, circuitBreaker, budgetManager,
     teamManager, meetingService, voiceIdentityStore,
     rtcService: rtcService.isConfigured() ? rtcService : undefined,
+    realtimeService: realtimeService.isConfigured() ? realtimeService : undefined,
     ws,
     sessionRegistry: options.sessionRegistry,
     activityStore,
@@ -94,6 +103,8 @@ export function startApiServer(options: ApiServerOptions): http.Server {
     handleBotRoutes,
     handleSyncRoutes,
     handleRtcRoutes,
+    handleRealtimeRoutes,
+    handleLabToolRoutes,
     handleSessionRoutes,
   ];
 
