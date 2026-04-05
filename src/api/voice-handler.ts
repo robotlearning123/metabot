@@ -316,6 +316,81 @@ export async function doubaoTTS(text: string, speaker: string): Promise<Buffer> 
 }
 
 // ---------------------------------------------------------------------------
+// Gemini (Google) TTS
+// ---------------------------------------------------------------------------
+
+export async function geminiTTS(text: string, voice: string): Promise<Buffer> {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) throw Object.assign(new Error('GEMINI_API_KEY not configured'), { statusCode: 500 });
+
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-native-audio:generateContent?key=${apiKey}`;
+  const response = await proxyFetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      contents: [{ parts: [{ text }] }],
+      generationConfig: {
+        responseModalities: ['AUDIO'],
+        speechConfig: {
+          voiceConfig: { 
+            prebuiltVoiceConfig: { 
+              voiceName: voice || 'Aoede' // Aoede, Charon, Fenrir, Kore, Leda, Orus, Puck
+            } 
+          }
+        },
+      },
+    }),
+  });
+
+  if (!response.ok) {
+    const err = await response.text();
+    throw new Error(`Gemini TTS failed: ${response.status} ${err}`);
+  }
+
+  const result = await response.json() as any;
+  const audioData = result?.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+  if (!audioData) {
+    throw new Error('Gemini TTS returned no audio data');
+  }
+  return Buffer.from(audioData, 'base64');
+}
+
+// ---------------------------------------------------------------------------
+// Grok (xAI) TTS
+// ---------------------------------------------------------------------------
+
+export async function grokTTS(text: string, voice: string): Promise<Buffer> {
+  const apiKey = process.env.XAI_API_KEY;
+  if (!apiKey) throw Object.assign(new Error('XAI_API_KEY not configured'), { statusCode: 500 });
+
+  const url = 'https://api.x.ai/v1/tts';
+  const response = await proxyFetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      text: text.slice(0, 15000),
+      voice_id: (voice || 'Eve').toLowerCase(),
+      language: detectChinese(text) ? 'zh' : 'en',
+      output_format: {
+        codec: 'mp3',
+        sample_rate: 24000,
+        bit_rate: 128000,
+      },
+    }),
+  });
+
+  if (!response.ok) {
+    const err = await response.text();
+    throw new Error(`Grok TTS failed: ${response.status} ${err}`);
+  }
+
+  return Buffer.from(await response.arrayBuffer());
+}
+
+// ---------------------------------------------------------------------------
 // Edge TTS (Microsoft Edge, free, no API key needed)
 // ---------------------------------------------------------------------------
 
@@ -361,6 +436,12 @@ export function resolveTTSVoice(explicit: string, ttsProvider: string, text?: st
   if (ttsProvider === 'elevenlabs') return 'EXAVITQu4vr4xnSDxMaL'; // Bella (multilingual)
   if (ttsProvider === 'edge') {
     return isChinese ? 'zh-CN-XiaoyiNeural' : 'en-US-JennyNeural';
+  }
+  if (ttsProvider === 'gemini') {
+    return isChinese ? 'Kore' : 'Aoede'; // Gemini voices: Aoede, Charon, Fenrir, Kore, Leda, Orus, Puck
+  }
+  if (ttsProvider === 'grok') {
+    return isChinese ? 'Ara' : 'Eve'; // Grok voices: Eve, Ara, Rex, Sal, Leo
   }
   return 'alloy'; // OpenAI (multilingual)
 }
@@ -526,6 +607,10 @@ export async function handleVoiceRequest(
         audioOut = await doubaoTTS(ttsText, ttsVoice);
       } else if (ttsProvider === 'edge') {
         audioOut = await edgeTTS(ttsText, ttsVoice);
+      } else if (ttsProvider === 'gemini') {
+        audioOut = await geminiTTS(ttsText, ttsVoice);
+      } else if (ttsProvider === 'grok') {
+        audioOut = await grokTTS(ttsText, ttsVoice);
       } else {
         audioOut = await openaiTTS(ttsText, ttsVoice);
       }
