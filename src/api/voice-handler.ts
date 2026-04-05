@@ -331,11 +331,11 @@ export async function geminiTTS(text: string, voice: string): Promise<Buffer> {
       contents: [{ parts: [{ text }] }],
       generationConfig: {
         responseModalities: ['AUDIO'],
-      },
-      speechConfig: {
-        voiceConfig: {
-          prebuiltVoiceConfig: {
-            voiceName: voice || 'Aoede',
+        speechConfig: {
+          voiceConfig: {
+            prebuiltVoiceConfig: {
+              voiceName: voice || 'Aoede',
+            },
           },
         },
       },
